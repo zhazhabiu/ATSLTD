@@ -5,7 +5,7 @@ This is an unofficial implementation of 2019 ACM MM《Asynchronous Tracking-by-D
 
 ## Prerequisites
 python >= 3.0  
-opencv-contrib-python (neccessary)
+opencv-contrib-python (neccessary)  
 numpy  
 pandas  
 openCV  
