@@ -5,7 +5,7 @@ import os
 from ETD import TrackingbyDetection
 
 image_size = (180, 240)
-def load_dataset(path_dataset, sequence, fname=None, suffix='txt'):
+def load_dataset(path_dataset, sequence, fname=None):
     if sequence=='star_tracking': # 1ms
         events = pd.read_csv(
             '{}/{}/{}'.format(path_dataset, sequence, fname), sep=",", header=None)  
@@ -32,12 +32,11 @@ def load_dataset(path_dataset, sequence, fname=None, suffix='txt'):
     return events_set
 
 if __name__ == '__main__':
-    dataset_path, sequence, fname = 'dataset', 'shapes_translation', ''
+    # dataset_path, sequence, fname = 'dataset', 'shapes_translation', ''
     # dataset_path, sequence, fname = 'dataset', 'shapes_rotation', ''
-    # dataset_path, sequence, fname = 'dataset', 'shapes_6dof', ''
-    # dataset_path, sequence, fname, image_size = 'dataset', 'star_tracking', 'Sequence3.csv', (180, 240) # us
+    dataset_path, sequence, fname = 'dataset', 'shapes_6dof', ''
+    # dataset_path, sequence, fname = 'dataset', 'star_tracking', 'Sequence4.csv' # us
     events_set = load_dataset(dataset_path, sequence, fname=fname)
-    # events_set = load_dataset(dataset_path, sequence, suffix='txt')
     if sequence == 'star_tracking':
         save_dir = './' + sequence + '/' + fname[:-4] + '_tracking_res'
     else:

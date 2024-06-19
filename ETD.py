@@ -1,9 +1,6 @@
 import numpy as np
 import cv2
 import numba as nb
-
-colormap = ['c', 'g', 'r', 'm', 'y', 'b', 'w', 'k']
-shapemap = ['o', '1', 's', 'p', '+', '*', 'x', 'v']
     
 @nb.jit(nopython=True)
 def calcEntropy(frame):
@@ -29,7 +26,7 @@ class TrackingbyDetection():
         self.mu = 0.3 # tracking threshold
         self.alpha=0.0832
         self.beta=0.0927
-        self.lamda = 0.1 # 论文上为0.7，但0.7检测不到任何框
+        self.lamda = 0.1 # 0.05 # 论文上为0.7，但0.7检测不到任何框
         self.prev_num = 0
         self.prev_boxes = []
         self.im_size = im_size
@@ -66,6 +63,8 @@ class TrackingbyDetection():
         orimap = self.edge_detection.computeOrientation(edges)
         edges = self.edge_detection.edgesNms(edges, orimap)
         boxes, scores = self.edge_boxes.getBoundingBoxes(edges, orimap) # (x, y, w, h)
+        if scores is None:
+            return boxes
         return boxes[scores[:, 0]>self.lamda]
     
     def track(self, boxes):
@@ -76,7 +75,11 @@ class TrackingbyDetection():
                 x, y, w, h = region
                 box = (x, y, x+w, y+h)
                 boxes.append(box)
-            return np.stack(boxes, 0)
+            if len(boxes) > 0:
+                boxes = np.stack(boxes, 0)
+            else:
+                boxes = np.empty((0, 4), np.int32)
+            return boxes
 
         def compute_IoU(prev, curr):
             '''
@@ -103,7 +106,7 @@ class TrackingbyDetection():
                 prev[:, 3] - prev[:, 1]))[:, np.newaxis].repeat(B, axis=1)
             area_1 = ((curr[:, 2] - curr[:, 0])*(
                 curr[:, 3] - curr[:, 1]))[np.newaxis, :].repeat(A, axis=0)
-            return inter/(area_0+area_1-inter)
+            return inter/(area_0+area_1-inter+1e-6)
         
         IoU = compute_IoU(self.prev_boxes, boxes)
         vals = IoU.max(1)
@@ -154,11 +157,21 @@ class TrackingbyDetection():
                     c_y = y + h//2
                     w *= self.gamma
                     h *= self.gamma
-                    im_ = im[int(c_y-h//2):int(c_y+h//2), int(c_x-w//2):int(c_x+w//2)]
+                    new_y1 = max(int(c_y-h//2), 0)
+                    new_x1 = max(int(c_x-w//2), 0)
+                    new_y2 = min(int(c_y+h//2), self.im_size[0])
+                    new_x2 = min(int(c_x+w//2), self.im_size[0])
+                    if new_y1 <= new_y2 or new_x1 <= new_x2:
+                        continue
+                    im_ = im[new_y1:new_y2, new_x1:new_x2]
                     boxes = self.detect(im_)
                     new_boxes.extend(boxes)
-                boxes = np.stack(new_boxes, 0)
-                curr_save_nameid = self.track(boxes)
+                if len(new_boxes) > 0:
+                    boxes = np.stack(new_boxes, 0)
+                    curr_save_nameid = self.track(boxes)
+                else:
+                    self.prev_boxes = np.empty((0, 4))
+                    continue
             # saving trajectories
             trajectories = self.unwarp_events(start, end, boxes)
             self.prev_save_nameid = curr_save_nameid
