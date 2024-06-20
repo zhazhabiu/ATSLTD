@@ -176,11 +176,12 @@ class TrackingbyDetection():
             trajectories = self.unwarp_events(start, end, boxes)
             self.prev_save_nameid = curr_save_nameid
             for j, k in enumerate(curr_save_nameid):
-                if k == -1:
-                    with open(f'{savedir}/{self.last_name_id}.txt', 'a+') as f:
-                        np.savetxt(f, np.c_[trajectories[j]], fmt='%d', delimiter=',') # us, x, y, p
-                    self.prev_save_nameid[j] = self.last_name_id
-                    self.last_name_id += 1
-                else:
-                    with open(f'{savedir}/{k}.txt', 'a+') as f:
-                        np.savetxt(f, np.c_[trajectories[j]], fmt='%d', delimiter=',') # us, x, y, p
+                if len(trajectories[j]) > 0:
+                    if k == -1:
+                        with open(f'{savedir}/{self.last_name_id}.txt', 'a+') as f:
+                            np.savetxt(f, np.c_[trajectories[j]], fmt='%d', delimiter=',') # us, x, y, p
+                        self.prev_save_nameid[j] = self.last_name_id
+                        self.last_name_id += 1
+                    else:
+                        with open(f'{savedir}/{k}.txt', 'a+') as f:
+                            np.savetxt(f, np.c_[trajectories[j]], fmt='%d', delimiter=',') # us, x, y, p
