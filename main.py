@@ -60,7 +60,7 @@ if __name__ == '__main__':
     if sequence == 'star_tracking':
         save_dir = './' + sequence + '/' + fname[:-4] + '_tracking_res'
     else:
-        save_dir = './' + sequence + '_tracking_res1013'
+        save_dir = './' + sequence + '_tracking_res'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     print('Start Tracking-by-Detection...')
