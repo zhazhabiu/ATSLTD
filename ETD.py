@@ -1,7 +1,15 @@
 import numpy as np
 import cv2
 import numba as nb
-import matplotlib.pyplot as plt
+import torch
+from os.path import realpath, dirname, join
+from DaSiamRPN.net import SiamRPNBIG
+from DaSiamRPN.run_SiamRPN import SiamRPN_init, SiamRPN_track
+from DaSiamRPN.utils import get_axis_aligned_bbox, cxy_wh_2_rect
+import os
+os.environ['CUDA_VISIBLE_DEVICES']='0'
+# torch.cuda.set_device(1)
+
 
 @nb.jit(nopython=True)
 def calcEntropy(frame):
@@ -27,6 +35,7 @@ class TrackingbyDetection():
         self.alpha=0.0832
         self.beta=0.0927
         self.lamda = 0.7
+        self.max_number = 40 # the max number of objects in one frame on datasets.
         self.prev_num = 0
         self.prev_boxes = prev_boxes
         self.im_size = im_size
@@ -41,11 +50,17 @@ class TrackingbyDetection():
             self.prev_save_nameid = np.array([])
             self.last_name_id = 0
         self.events = events
+        
+        # load net
+        self.net = SiamRPNBIG()
+        self.net.load_state_dict(torch.load(join(realpath(dirname(__file__)), 'SiamRPNBIG.model')))
+        self.net.eval().cuda()
 
     def AdaptiveTimeSurface(self):
         '''
         Return [np.array([h, w, 2])]*N, N means the number of ATSLTD frames.
         '''
+        intensity = np.zeros((*self.im_size, 3), np.float32)
         F = np.zeros((*self.im_size, 3), np.float32)
         entropy = np.zeros(2)
         prevt = self.events[self.prev_num, 0]
@@ -55,28 +70,31 @@ class TrackingbyDetection():
             F = np.round(F*1.*prevt/(t+1E-6))
             prevt = t
             F[y, x, p] = 255
+            intensity[y, x, 0] += 1
+            intensity[y, x, 1] += 1
+            intensity[y, x, 2] += 1
             if i % 50 == 0:
                 entropy[p] = calcEntropy(F[:, :, p].astype(np.uint8))
                 if entropy.mean() >= self.alpha and entropy.mean() <= self.beta:
                     self.prev_num = i+1
-                    return F
+                    return F, intensity
         self.prev_num = len(self.events) - 1
-        return F
+        return F, intensity
 
-    def detect(self, im, prev_box=None):
+    def detect(self, im, prev_box=[]):
         im = im.astype(np.float32) / 255.0 
+        cv2.imwrite('./ATS/0.png', im*255)
         edges = self.edge_detection.detectEdges(im)
         orimap = self.edge_detection.computeOrientation(edges)
         edges = self.edge_detection.edgesNms(edges, orimap)
         boxes, scores = self.edge_boxes.getBoundingBoxes(edges, orimap) # (x, y, x, y)
-        if prev_box is None:
-            return boxes[scores[:, 0] > 0.1]
+        if len(prev_box)==0:
+            sort_ind = np.argsort(scores[:, 0])
+            return boxes[sort_ind[-self.max_number:]]
         refined_boxes, refined_scores = self.refine_proposals(boxes, scores, prev_box)
-        if len(refined_scores) == 0:
-            return refined_boxes
-        return refined_boxes[refined_scores.argmax()]
+        return refined_boxes
     
-    def track(self, boxes):
+    def track(self, boxes, im):
         
         def cvtxyxy(regions):
             boxes = []
@@ -118,18 +136,34 @@ class TrackingbyDetection():
                 prev[:, 3] - prev[:, 1]))[np.newaxis, :].repeat(A, axis=0)
             return inter/(area_0+area_1-inter+1e-6)
         
-        IoU = compute_IoU(boxes, self.prev_boxes)
-        vals = IoU.max(1)
-        ids = np.argmax(IoU, axis=1)
         success_track = []
-        curr_save_nameid = np.full(len(boxes), -1)
-        for i, id in enumerate(ids):
-            if vals[i] > self.mu:
-                success_track.append(boxes[i])
-                curr_save_nameid[i] = self.prev_save_nameid[id]
+        curr_save_nameid = []
+        not_tracked = list(range(0, len(self.prev_boxes)))
+        for i, proposals in enumerate(boxes):
+            IoU = compute_IoU(proposals, self.prev_boxes[not_tracked])
+            val = IoU.max()
+            ids = np.argmax(IoU)
+            rid = ids // len(not_tracked)
+            cid = not_tracked[ids % len(not_tracked)]
+            if val > self.mu:
+                success_track.append(proposals[rid])
+                curr_save_nameid.append(self.prev_save_nameid[cid])
+                if cid in not_tracked:
+                    not_tracked.remove(cid)
+        if len(not_tracked) > 0:
+            ccc = len(success_track)
+            for i in not_tracked:
+                x, y, w, h = self.prev_boxes[i]
+                target_pos, target_sz = np.array([x+w//2, y+h//2]), np.array([w, h]) # [cx, cy, w, h] 
+                # im - HxWxC
+                state = SiamRPN_init(im, target_pos, target_sz, self.net)
+                res = cxy_wh_2_rect(state['target_pos'], state['target_sz'])
+                success_track.append(res)
+                curr_save_nameid.append(self.prev_save_nameid[i])
+                ccc += 1
         if len(success_track) > 0:
-            self.prev_boxes = np.stack(success_track, 0)
-        return curr_save_nameid
+            success_track = np.stack(success_track, 0)
+        return curr_save_nameid, success_track
         
     def unwarp_events(self, start, end, boxes):
         '''
@@ -215,13 +249,12 @@ class TrackingbyDetection():
         while self.prev_num < len(self.events) - 1:
             print(f'Converting {cnt}-th ATSLD frame...')
             start = self.events[self.prev_num, 0]
-            im = self.AdaptiveTimeSurface()
+            im, intensity = self.AdaptiveTimeSurface()
             end = self.events[self.prev_num, 0]
             print(f'{cnt}-th ATSLD frame is done. Left {len(self.events) - self.prev_num} events to deal.')
             cnt += 1
             if len(self.prev_boxes) == 0:
                 boxes = self.detect(im)
-                self.prev_boxes = boxes
                 curr_save_nameid = np.full(len(boxes), -1)
             else:
                 new_boxes = []
@@ -243,25 +276,29 @@ class TrackingbyDetection():
                     mask[new_y1:new_y2, new_x1:new_x2] = 1
                     im_[:, :, 0] *= mask
                     im_[:, :, 1] *= mask
+                    im_[:, :, 2] *= mask
+                    im_ = im_[:, :, ::-1]
                     boxes = self.detect(im_, j)
                     if len(boxes) > 0:
-                        new_boxes.append(boxes)
+                        new_boxes.append(boxes) # each object owes a set of proposals
                 if len(new_boxes) > 0:
-                    boxes = np.stack(new_boxes, 0)
-                    curr_save_nameid = self.track(boxes)
+                    curr_save_nameid, boxes = self.track(new_boxes, intensity)
                 else:
                     self.prev_boxes = np.empty((0, 4))
+                    self.prev_save_nameid = []
                     continue
             # saving trajectories
             trajectories = self.unwarp_events(start, end, boxes)
-            self.prev_save_nameid = curr_save_nameid
             for j, k in enumerate(curr_save_nameid):
                if len(trajectories[j]) > 0:
                     if k == -1:
                         with open(f'{savedir}/{self.last_name_id}.txt', 'a+') as f:
                             np.savetxt(f, np.c_[trajectories[j]], fmt='%d', delimiter=',') # us, x, y, p
-                        self.prev_save_nameid[j] = self.last_name_id
+                        curr_save_nameid[j] = self.last_name_id
                         self.last_name_id += 1
                     else:
                         with open(f'{savedir}/{k}.txt', 'a+') as f:
                             np.savetxt(f, np.c_[trajectories[j]], fmt='%d', delimiter=',') # us, x, y, p
+            self.prev_boxes = boxes
+            self.prev_save_nameid = curr_save_nameid
+                

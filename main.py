@@ -43,12 +43,10 @@ def load_dataset(path_dataset, sequence, fname=None):
     return events_set
 
 if __name__ == '__main__':
-    # dataset_path, sequence, fname, image_size = 'dataset', 'shapes_translation', '', (180, 240)
-    dataset_path, sequence, fname, image_size = 'dataset', 'shapes_rotation', '', (180, 240)
+    dataset_path, sequence, fname, image_size = 'dataset', 'shapes_translation', '', (180, 240)
+    # dataset_path, sequence, fname, image_size = 'dataset', 'shapes_rotation', '', (180, 240)
     # dataset_path, sequence, fname, image_size = 'dataset', 'shapes_6dof', '', (180, 240)
-    # # dataset_path, sequence, fname = 'dataset', 'star_tracking', 'Sequence4.csv' # us
     # 需要提供初始化跟踪坐标
-    events_set = load_dataset(dataset_path, sequence, fname=fname)
     '''truth loading'''
     gt_file = f'./dataset/{sequence}/locations/frame_00000000.txt'
     gts = np.loadtxt(gt_file, delimiter=',').reshape(-1, 5)
@@ -56,29 +54,45 @@ if __name__ == '__main__':
     # cvt xyxy2xywh
     gts[:, 2] -= gts[:, 0]
     gts[:, 3] -= gts[:, 1]
-    
-    if sequence == 'star_tracking':
-        save_dir = './' + sequence + '/' + fname[:-4] + '_tracking_res'
-    else:
-        save_dir = './' + sequence + '_tracking_res'
+    events_set = load_dataset(dataset_path, sequence, fname=fname)
+    save_dir = './' + sequence + '_tracking_res'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     print('Start Tracking-by-Detection...')
     TD = TrackingbyDetection(events_set, prev_boxes=gts)
     TD.forward(save_dir)
     
+    # dataset_path, sequence, fname = 'dataset', 'star_tracking', 'Sequence4.csv' # us
+    # events_set = load_dataset(dataset_path, sequence, fname=fname)
+    # save_dir = './' + sequence + '/' + fname[:-4] + '_tracking_res'
+    # if not os.path.exists(save_dir):
+    #     os.makedirs(save_dir)
+    # print('Start Tracking-by-Detection...')
+    # TD = TrackingbyDetection(events_set)
+    # TD.forward(save_dir)
+    
     
     # SOD
     # mid = 'near'
-    # dataset_path, sequence, image_size = 'dataset', '1-left', (720, 1280) # dt
-    # dataset_path, sequence, image_size = 'dataset', '2-middle', (720, 1280) # dt
+    # # dataset_path, sequence, image_size = 'dataset', '1-left', (720, 1280) # dt
+    # # dataset_path, sequence, image_size = 'dataset', '2-middle', (720, 1280) # dt
     # dataset_path, sequence, image_size = 'dataset', '3-right', (720, 1280) # dt
     # files = os.listdir(f'./{dataset_path}/{mid}/{sequence}')
+    # for id, fname in enumerate(files):
+    #     events_set = load_dataset(dataset_path, f'/{mid}/{sequence}', fname)
+    #     save_dir = './' + f'{mid}/{sequence}' + '/' +fname[:-4] + '_tracking_res'
+    #     if not os.path.exists(save_dir):
+    #         os.makedirs(save_dir)
+    #     print('Start Tracking-by-Detection...')
+    #     TD = TrackingbyDetection(events_set, image_size)
+    #     TD.forward(save_dir)
+
+    # waterdrops
     # dataset_path, sequence, image_size = 'dataset', 'waterdrops', (720, 1280) # dt
     # files = os.listdir(f'./{dataset_path}//{sequence}')
     # for id, fname in enumerate(files):
     #     events_set = load_dataset(dataset_path, sequence, fname)
-    #     save_dir = './' + '/' + sequence + '/' +fname[:-4] + '_tracking_res'
+    #     save_dir = './' + sequence + '/' +fname[:-4] + '_tracking_res'
     #     if not os.path.exists(save_dir):
     #         os.makedirs(save_dir)
     #     print('Start Tracking-by-Detection...')
