@@ -29,23 +29,34 @@ def calcEntropy(frame):
     return NZGE.sum() / np.count_nonzero(NZGE)
     
 class TrackingbyDetection():
-    def __init__(self, events=None, im_size=(180, 240), prev_boxes=[]):
+    def __init__(self, events=None, im_size=(180, 240), prev_boxes=[], gt_files=None):
         self.gamma = 1.5 # search scale
         self.mu = 0.3 # tracking threshold
         self.alpha=0.0832
         self.beta=0.0927
         self.lamda = 0.7
-        self.max_number = 40 # the max number of objects in one frame on datasets.
         self.prev_num = 0
         self.prev_boxes = prev_boxes
         self.im_size = im_size
         self.model = './model.yml.gz'
         self.edge_detection = cv2.ximgproc.createStructuredEdgeDetection(self.model)
         self.edge_boxes = cv2.ximgproc.createEdgeBoxes(maxBoxes=1000, minBoxArea=100)
+        self.gt_files = gt_files
         # additionally
         if len(prev_boxes) > 0:
             self.last_name_id = len(prev_boxes)
             self.prev_save_nameid = np.array(range(0, len(prev_boxes)))
+        elif gt_files is not None and len(gt_files) > 0:
+            # '''truth loading'''
+            gt_file = gt_files[0]
+            gts = np.loadtxt(gt_file, delimiter=',').reshape(-1, 5)
+            gts = gts[:, :-1]
+            # cvt xyxy2xywh
+            gts[:, 2] -= gts[:, 0]
+            gts[:, 3] -= gts[:, 1]
+            self.prev_boxes = gts
+            self.last_name_id = len(self.prev_boxes)
+            self.prev_save_nameid = np.array(list(range(0, len(self.prev_boxes))))
         else:
             self.prev_save_nameid = np.array([])
             self.last_name_id = 0
@@ -89,8 +100,7 @@ class TrackingbyDetection():
         edges = self.edge_detection.edgesNms(edges, orimap)
         boxes, scores = self.edge_boxes.getBoundingBoxes(edges, orimap) # (x, y, x, y)
         if len(prev_box)==0:
-            sort_ind = np.argsort(scores[:, 0])
-            return boxes[sort_ind[-self.max_number:]]
+            return np.array([])
         refined_boxes, refined_scores = self.refine_proposals(boxes, scores, prev_box)
         return refined_boxes
     
@@ -246,6 +256,9 @@ class TrackingbyDetection():
     
     def forward(self, savedir='./tracking_res/'):
         cnt = 0
+        frame_id = 0
+        publish_framerate = 30
+        t_next_publish = (1.0 / publish_framerate)
         while self.prev_num < len(self.events) - 1:
             print(f'Converting {cnt}-th ATSLD frame...')
             start = self.events[self.prev_num, 0]
@@ -272,8 +285,8 @@ class TrackingbyDetection():
                     if new_y1 > new_y2 or new_x1 > new_x2:
                         continue
                     im_ = im.copy()
-                    mask = np.zeros(self.im_size)
-                    mask[new_y1:new_y2, new_x1:new_x2] = 1
+                    mask = np.zeros(self.im_size, np.float32)
+                    mask[new_y1:new_y2, new_x1:new_x2] = 1.0
                     im_[:, :, 0] *= mask
                     im_[:, :, 1] *= mask
                     im_[:, :, 2] *= mask
@@ -286,7 +299,32 @@ class TrackingbyDetection():
                 else:
                     self.prev_boxes = np.empty((0, 4))
                     self.prev_save_nameid = []
-                    continue
+                
+            t = self.events[self.prev_num, 0]
+            if t > t_next_publish:
+                t_next_publish = t + (1.0 / publish_framerate)
+                frame_id += 1
+                # Initialize new targets from self.gt_files if available
+                if self.gt_files is not None:
+                    if frame_id < len(self.gt_files):
+                        gt_file = self.gt_files[frame_id]
+                        gts = np.loadtxt(gt_file, delimiter=',').reshape(-1, 5)
+                        gts = gts[:, :-1]  # Remove the last column if it's not part of the bounding box
+                        gts[:, 2] -= gts[:, 0]  # Convert to xywh format
+                        gts[:, 3] -= gts[:, 1]
+                        if len(self.prev_boxes) < len(gts):
+                            add_boxes_num = gts.shape[0] - len(self.prev_boxes)
+                            if len(self.prev_boxes) > 0:
+                                dist = gts[:, None, :2] - self.prev_boxes[None, :, :2]
+                                dist = np.linalg.norm(dist, axis=2)
+                                dist = dist.min(axis=1)
+                                new_ids = np.argsort(dist)[:add_boxes_num]
+                            else:
+                                new_ids = np.arange(len(gts))
+                            self.prev_boxes = np.concatenate((self.prev_boxes, gts[new_ids].reshape(-1, 4)), axis=0)
+                            self.prev_save_nameid = self.prev_save_nameid.extend(list(range(self.last_name_id, self.last_name_id + add_boxes_num)))
+                            self.last_name_id += add_boxes_num
+            
             # saving trajectories
             trajectories = self.unwarp_events(start, end, boxes)
             for j, k in enumerate(curr_save_nameid):
@@ -299,6 +337,6 @@ class TrackingbyDetection():
                     else:
                         with open(f'{savedir}/{k}.txt', 'a+') as f:
                             np.savetxt(f, np.c_[trajectories[j]], fmt='%d', delimiter=',') # us, x, y, p
+            
             self.prev_boxes = boxes
             self.prev_save_nameid = curr_save_nameid
-                
